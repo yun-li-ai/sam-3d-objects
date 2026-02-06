@@ -11,6 +11,7 @@ from PIL import Image
 import numpy as np
 from loguru import logger
 import uuid
+from rembg import remove as rembg_remove
 
 
 class StorageService:
@@ -150,7 +151,11 @@ class StorageService:
     
     def save_generated_image(self, job_id: str, object_id: str, image: Image.Image) -> str:
         """
-        Save generated clean image of object.
+        Save generated clean image and a no-background version using rembg.
+        
+        Saves:
+        - generated.png: Original image from Gemini.
+        - generated_nobg.png: Background removed with rembg (returned path).
         
         Args:
             job_id: Job ID
@@ -158,13 +163,18 @@ class StorageService:
             image: PIL Image
             
         Returns:
-            Path to saved image
+            Path to the no-background image (generated_nobg.png).
         """
         object_dir = self.create_object_directory(job_id, object_id)
-        image_path = object_dir / "generated.png"
-        image.save(image_path)
-        logger.info(f"Saved generated image: {image_path}")
-        return str(image_path)
+        original_path = object_dir / "generated.png"
+        image.save(original_path)
+        logger.info(f"Saved generated image XXXXXXX: {original_path}")
+        
+        nobg_path = object_dir / "generated_nobg.png"
+        image_nobg = rembg_remove(image)
+        image_nobg.save(nobg_path)
+        logger.info(f"Saved no-background image: {nobg_path}")
+        return str(nobg_path)
     
     def save_edited_image(self, job_id: str, object_id: str, image: Image.Image) -> str:
         """
@@ -176,13 +186,18 @@ class StorageService:
             image: PIL Image
             
         Returns:
-            Path to saved image
+            Path to the no-background image (edited_nobg.png).
         """
         object_dir = self.create_object_directory(job_id, object_id)
         image_path = object_dir / "edited.png"
         image.save(image_path)
         logger.info(f"Saved edited image: {image_path}")
-        return str(image_path)
+
+        nobg_path = object_dir / "edited_nobg.png"
+        image_nobg = rembg_remove(image)
+        image_nobg.save(nobg_path)
+        logger.info(f"Saved no-background edited image: {nobg_path}")
+        return str(nobg_path)
     
     def get_assets_directory(self, job_id: str, object_id: str) -> Path:
         """

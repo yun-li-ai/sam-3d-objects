@@ -73,10 +73,10 @@ class GeminiService:
         
         # Matches notebook prompt (simplified version that works faster)
         prompt = """You are part of a project to create 3D asset of objects in a 2D image. 
-Your task specifically is to detect objects of interest and return a segmentation mask for each object. 
-Use your best judgement to find only objects that might be useful for generating 3D assets. 
-Exclude backgrounds, walls, floors, and very small objects. 
-Return at most 10 objects, ordered by the visual importance of the object in the image (most important first).
+Your task is to detect objects of interest and return a segmentation mask for each object in the image. 
+Find noticeable objects that might be useful for generating 3D assets in the image, ignore background, walls, floors, and very small objects. 
+Return at most 8 objects, ordered by the visual importance of the object in the image (most important first).
+
 Output a JSON list of segmentation masks where each entry contains 
 - the descriptive text label in the key "label", 
 - the 2D bounding box in the key "box_2d", 
@@ -136,11 +136,12 @@ Output a JSON list of segmentation masks where each entry contains
         
         # Matches notebook prompt at line 732-736
         prompt = f"""You are given an image and a segmentation masks of a target object in the image. 
-You need to generate a new image for that object with a TRANSPARENT BACKGROUND (not white, but fully transparent/alpha channel), 
-from an angle that is good for other models to generate 3D asset from that image. 
+You need to generate a new image for that object, there should be only the target object in the image, no other objects.
+The target object should be shown from an angle that best captures its shape and visual features. 
 The object in the new image should be as similar to the original image as possible, keep the original object style (color, texture, etc.).
+
 If the object is a famous iconic object (such as statue of liberty, golden gate bridge, etc.), you can use a real image of that object if you can find one.
-IMPORTANT: The background of the object in the generated image MUST be completely transparent (alpha = 0), not white or any other color.
+IMPORTANT: Use a background color that is easily distinguishable from the object, so background remove tool like rembg can easily remove the background.
 The mask is as follow:
 {str(mask_info)}"""
         
@@ -172,9 +173,26 @@ The mask is as follow:
             
             for part in response.parts:
                 if part.inline_data is not None:
+                    # Use raw bytes and convert to PIL so rembg/save get a real PIL Image.
+                    raw = getattr(part.inline_data, "data", None) or getattr(part.inline_data, "bytes", None)
+                    if raw is None and hasattr(part.inline_data, "image"):
+                        # Some SDKs expose image; try to get bytes from it.
+                        img_obj = part.inline_data.image
+                        if hasattr(img_obj, "image_bytes"):
+                            raw = img_obj.image_bytes
+                    if raw is not None:
+                        generated_image = Image.open(io.BytesIO(bytes(raw))).convert("RGBA")
+                        logger.info(f"✅ Generated clean image")
+                        return generated_image
+                    # Fallback: as_image() may return PIL in some SDK versions.
                     generated_image = part.as_image()
-                    logger.info(f"✅ Generated clean image")
-                    return generated_image
+                    if isinstance(generated_image, Image.Image):
+                        return generated_image
+                    # If it's google.genai.types.Image, try to get bytes and convert.
+                    if hasattr(generated_image, "image_bytes"):
+                        generated_image = Image.open(io.BytesIO(generated_image.image_bytes)).convert("RGBA")
+                        return generated_image
+                    raise ValueError("Could not get image bytes from Gemini response. Try using force_return_bytes=True.")
             
             logger.warning("No image generated in response, returning original")
             return image
@@ -200,7 +218,7 @@ The mask is as follow:
         full_prompt = f"""Edit the object in this image according to the following instruction:
 {prompt}
 
-Keep the object in the same position and angle. Only modify what is requested.
+Keep the object in the same position and angle when possible. Only modify what is requested.
 IMPORTANT: Maintain the TRANSPARENT BACKGROUND (alpha = 0) if the image has one, or make the background transparent if it isn't already."""
         
         try:
@@ -231,9 +249,25 @@ IMPORTANT: Maintain the TRANSPARENT BACKGROUND (alpha = 0) if the image has one,
             
             for part in response.parts:
                 if part.inline_data is not None:
+                    # Convert to PIL Image so storage/rembg get a real PIL Image (same as generate_clean_image).
+                    raw = getattr(part.inline_data, "data", None) or getattr(part.inline_data, "bytes", None)
+                    if raw is None and hasattr(part.inline_data, "image"):
+                        img_obj = part.inline_data.image
+                        if hasattr(img_obj, "image_bytes"):
+                            raw = img_obj.image_bytes
+                    if raw is not None:
+                        edited_image = Image.open(io.BytesIO(bytes(raw))).convert("RGBA")
+                        logger.info(f"✅ Image edited successfully")
+                        return edited_image
                     edited_image = part.as_image()
-                    logger.info(f"✅ Image edited successfully")
-                    return edited_image
+                    if isinstance(edited_image, Image.Image):
+                        logger.info(f"✅ Image edited successfully")
+                        return edited_image
+                    if hasattr(edited_image, "image_bytes"):
+                        edited_image = Image.open(io.BytesIO(edited_image.image_bytes)).convert("RGBA")
+                        logger.info(f"✅ Image edited successfully")
+                        return edited_image
+                    raise ValueError("Could not get image bytes from Gemini edit response. Try using force_return_bytes=True.")
             
             logger.warning("No image generated in response, returning original")
             return image

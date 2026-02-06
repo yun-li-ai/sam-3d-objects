@@ -3,11 +3,14 @@
 # Core dependencies.
 gradio>=4.0.0
 loguru>=0.7.0
-numpy>=1.24.0
+# Pin numpy<2 for compatibility with kaolin (SAM-3D pipeline). rembg must not upgrade it.
+numpy>=1.24.0,<2.0
 Pillow>=10.0.0
 scipy>=1.11.0
 matplotlib>=3.7.0
 opencv-python>=4.8.0
+rembg>=2.0.0
+onnxruntime>=1.16.0  # Required by rembg for background removal models
 
 # Gemini API (newer SDK used in notebook).
 google-genai>=0.2.0
