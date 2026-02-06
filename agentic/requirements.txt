@@ -1,0 +1,18 @@
+# Agentic 2D→3D System Requirements
+
+# Core dependencies.
+gradio>=4.0.0
+loguru>=0.7.0
+numpy>=1.24.0
+Pillow>=10.0.0
+scipy>=1.11.0
+matplotlib>=3.7.0
+opencv-python>=4.8.0
+
+# Gemini API (newer SDK used in notebook).
+google-genai>=0.2.0
+
+# Existing dependencies (from requirements.inference.txt).
+torch>=2.0.0
+trimesh>=4.0.0
+pygltflib>=1.16.0

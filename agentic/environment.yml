@@ -1,0 +1,23 @@
+name: agentic
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=11.8
+  - pip
+  - pip:
+    - gradio>=4.0.0
+    - google-genai>=0.2.0
+    - loguru>=0.7.0
+    - pillow>=10.0.0
+    - numpy>=1.24.0
+    - matplotlib>=3.7.0
+    - scipy>=1.11.0
+    - opencv-python>=4.8.0
+    - pyyaml>=6.0

@@ -1,1 +1,9 @@
-__pycache__
+__pycache__/
+*.pyc
+*.pyo
+.Python
+*.so
+
+# Jupyter Notebook checkpoints (auto-saved backups)
+.ipynb_checkpoints/
+*.ipynb_checkpoints

@@ -1,0 +1,37 @@
+# Configuration for Agentic 2D→3D System
+
+# Gemini API Settings.
+gemini:
+  api_key_env: "GEMINI_API_KEY"  # Environment variable name
+  segmentation_model: "gemini-2.5-pro"  # Model for segmentation (structured output)
+  image_model: "gemini-2.5-flash-image"  # Model for image generation
+  timeout: 60
+  max_retries: 3
+
+# SAM-3D-Objects Settings.
+sam3d:
+  config_path: "../checkpoints/hf/pipeline.yaml"
+  compile_model: false
+  default_seed: 42
+  inference_steps:
+    stage1: 25
+    stage2: 25
+
+# Storage Settings.
+storage:
+  base_dir: "data/jobs"  # Under agentic/ directory
+  temp_dir: "temp_3d_outputs"
+
+# UI Settings.
+ui:
+  framework: "gradio"
+  host: "0.0.0.0"
+  port: 7860
+  share: false
+  max_upload_size_mb: 20
+
+# Processing Settings.
+processing:
+  max_concurrent_jobs: 1
+  queue_check_interval_ms: 100
+  auto_process_queue: false
