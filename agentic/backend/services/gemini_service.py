@@ -74,8 +74,8 @@ class GeminiService:
         # Matches notebook prompt (simplified version that works faster)
         prompt = """You are part of a project to create 3D asset of objects in a 2D image. 
 Your task is to detect objects of interest and return a segmentation mask for each object in the image. 
-Find noticeable objects that might be useful for generating 3D assets in the image, ignore background, walls, floors, and very small objects. 
-Return at most 8 objects, ordered by the visual importance of the object in the image (most important first).
+Find noticeable objects only, ignore background, walls, floors, small objects or parts of objects. 
+Return at most 8 objects, ordered by the visual importance of the object in the image (most important first). Less than 8 objects is fine.
 
 Output a JSON list of segmentation masks where each entry contains 
 - the descriptive text label in the key "label", 
@@ -135,7 +135,8 @@ Output a JSON list of segmentation masks where each entry contains
         logger.info(f"Image size: {image.size}")
         
         # Matches notebook prompt at line 732-736
-        prompt = f"""You are given an image and a segmentation masks of a target object in the image. 
+        prompt = f"""You are given an image and a segmentation masks of the target object in the image. 
+The target object is {mask_info.get('label', 'unknown')}.
 You need to generate a new image for that object, there should be only the target object in the image, no other objects.
 The target object should be shown from an angle that best captures its shape and visual features. 
 The object in the new image should be as similar to the original image as possible, keep the original object style (color, texture, etc.).
