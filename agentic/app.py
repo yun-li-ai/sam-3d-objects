@@ -192,6 +192,197 @@ def generate_3d_single_object(object_id: str) -> Tuple[str, str]:
         return f"❌ Error: {str(e)}\n{traceback.format_exc()}", None
 
 
+def run_full_pipeline(image: np.ndarray):
+    """
+    Generator that runs the full pipeline and yields after each major step so the UI
+    updates incrementally: segmentation → clean images → each 3D asset.
+    """
+    global current_job
+    
+    NUM_ROWS = 20
+    
+    def _empty_outputs():
+        err = "❌ Please upload an image"
+        return (
+            err, None, "", gr.update(visible=False),
+            *([gr.update(visible=False)] * NUM_ROWS),
+            *([None] * NUM_ROWS),
+            "",
+            *([None] * NUM_ROWS),
+            *([None] * NUM_ROWS),
+            *([None] * NUM_ROWS),
+            *([gr.update(visible=False)] * NUM_ROWS),
+        )
+    
+    if image is None:
+        yield _empty_outputs()
+        return
+    
+    try:
+        orch = initialize_orchestrator()
+        pil_image = Image.fromarray(image)
+        
+        # Helper to build the full output tuple from current job state (optional partial updates).
+        def _build_output(
+            status_segment_val,
+            overlay_path_val,
+            status_generate_val,
+            generated_paths=None,
+            obj_statuses=None,
+            model_3d_paths=None,
+            viewer_visibilities=None,
+        ):
+            n = len(current_job.objects) if current_job else 0
+            group_updates = [gr.update(visible=True) if i < n else gr.update(visible=False) for i in range(NUM_ROWS)]
+            masked_updates = []
+            for i in range(NUM_ROWS):
+                if i < n and current_job.objects[i].masked_original_path and os.path.exists(current_job.objects[i].masked_original_path):
+                    masked_updates.append(current_job.objects[i].masked_original_path)
+                else:
+                    masked_updates.append(None)
+            if generated_paths is None:
+                generated_paths = [None] * NUM_ROWS
+            if obj_statuses is None:
+                obj_statuses = [None] * NUM_ROWS
+            if model_3d_paths is None:
+                model_3d_paths = [None] * NUM_ROWS
+            if viewer_visibilities is None:
+                viewer_visibilities = [gr.update(visible=False)] * NUM_ROWS
+            # Pad to NUM_ROWS so the tuple length is always correct.
+            def _pad(lst, default):
+                return (list(lst) + [default] * NUM_ROWS)[:NUM_ROWS]
+            generated_paths = _pad(generated_paths, None)
+            obj_statuses = _pad(obj_statuses, None)
+            model_3d_paths = _pad(model_3d_paths, None)
+            viewer_visibilities = _pad(viewer_visibilities, gr.update(visible=False))
+            shareable_url = f"Job ID: {current_job.job_id}\nAccess at: http://0.0.0.0:7860/?job_id={current_job.job_id}" if current_job else ""
+            return (
+                status_segment_val,
+                overlay_path_val,
+                shareable_url,
+                gr.update(visible=True),
+                *group_updates,
+                *masked_updates,
+                status_generate_val,
+                *generated_paths,
+                *obj_statuses,
+                *model_3d_paths,
+                *viewer_visibilities,
+            )
+        
+        # 1. Create job and segment
+        logger.info("Pipeline: Creating job and segmenting...")
+        current_job = orch.create_job_from_image(pil_image)
+        current_job, overlay_image = orch.segment_image(current_job)
+        overlay_path = current_job.overlay_mask_path
+        n_objs = len(current_job.objects)
+        status_segment = f"✅ Segmentation complete! Found {n_objs} objects.\nNext: Generating clean images..."
+        yield _build_output(status_segment, overlay_path, "")
+        
+        # 2. Generate clean images for all
+        logger.info("Pipeline: Generating clean images for all objects...")
+        orch.generate_clean_images(current_job)
+        current_job = orch.get_job(current_job.job_id)
+        generated_paths = []
+        for i in range(NUM_ROWS):
+            if i < len(current_job.objects) and current_job.objects[i].generated_image_path and os.path.exists(current_job.objects[i].generated_image_path):
+                generated_paths.append(current_job.objects[i].generated_image_path)
+            else:
+                generated_paths.append(None)
+        status_generate = f"✅ Clean images generated for all {n_objs} objects.\nNext: Generating 3D assets one by one..."
+        yield _build_output(
+            f"✅ Segmentation complete! Found {n_objs} objects.",
+            overlay_path,
+            status_generate,
+            generated_paths=generated_paths,
+        )
+        
+        # 3. Process 3D queue one by one and yield after each
+        object_ids = [obj.object_id for obj in current_job.objects]
+        orch.submit_3d_generation(current_job, object_ids)
+        n_3d_ok = 0
+        for idx in range(len(object_ids)):
+            logger.info(f"Pipeline: Generating 3D asset {idx + 1}/{len(object_ids)}...")
+            results = orch.process_3d_queue(max_iterations=1)
+            current_job = orch.get_job(current_job.job_id)
+            if results and results[0][2]:
+                n_3d_ok += 1
+            # Build current state for generated images and 3D
+            generated_paths = []
+            obj_statuses = []
+            model_3d_paths = []
+            viewer_visibilities = []
+            for i in range(NUM_ROWS):
+                if i < len(current_job.objects):
+                    obj = current_job.objects[i]
+                    generated_paths.append(
+                        obj.generated_image_path if obj.generated_image_path and os.path.exists(obj.generated_image_path) else None
+                    )
+                    if obj.asset_3d:
+                        asset_path = obj.asset_3d.glb_path or obj.asset_3d.ply_path
+                        if asset_path and os.path.exists(asset_path):
+                            obj_statuses.append(f"✅ 3D: {obj.label}")
+                            model_3d_paths.append(asset_path)
+                            viewer_visibilities.append(gr.update(visible=True))
+                        else:
+                            obj_statuses.append("")
+                            model_3d_paths.append(None)
+                            viewer_visibilities.append(gr.update(visible=False))
+                    else:
+                        obj_statuses.append("")
+                        model_3d_paths.append(None)
+                        viewer_visibilities.append(gr.update(visible=False))
+                else:
+                    generated_paths.append(None)
+                    obj_statuses.append(None)
+                    model_3d_paths.append(None)
+                    viewer_visibilities.append(gr.update(visible=False))
+            status_segment = f"✅ Segmentation: {n_objs} objects."
+            status_generate = f"✅ Clean images done. 3D: {n_3d_ok}/{len(object_ids)} generated (just finished object {idx + 1})."
+            yield _build_output(
+                status_segment,
+                overlay_path,
+                status_generate,
+                generated_paths=generated_paths,
+                obj_statuses=obj_statuses,
+                model_3d_paths=model_3d_paths,
+                viewer_visibilities=viewer_visibilities,
+            )
+        
+        # Final status
+        status_segment = (
+            f"✅ Pipeline complete!\n"
+            f"• Segmented: {n_objs} objects\n"
+            f"• Clean images: generated for all\n"
+            f"• 3D assets: {n_3d_ok}/{len(object_ids)} generated"
+        )
+        status_generate = f"✅ All done. 3D assets: {n_3d_ok}/{len(object_ids)}."
+        yield _build_output(
+            status_segment,
+            overlay_path,
+            status_generate,
+            generated_paths=generated_paths,
+            obj_statuses=obj_statuses,
+            model_3d_paths=model_3d_paths,
+            viewer_visibilities=viewer_visibilities,
+        )
+        
+    except Exception as e:
+        logger.error(f"Pipeline failed: {e}")
+        import traceback
+        err = f"❌ Pipeline error: {str(e)}\n{traceback.format_exc()}"
+        yield (
+            err, None, "", gr.update(visible=False),
+            *([gr.update(visible=False)] * NUM_ROWS),
+            *([None] * NUM_ROWS),
+            "",
+            *([None] * NUM_ROWS),
+            *([None] * NUM_ROWS),
+            *([None] * NUM_ROWS),
+            *([gr.update(visible=False)] * NUM_ROWS),
+        )
+
+
 def create_object_row(obj_id: str, label: str, idx: int):
     """Create UI components for a single object row."""
     with gr.Group():
@@ -275,7 +466,9 @@ def create_ui():
         with gr.Row():
             with gr.Column(scale=1):
                 image_input = gr.Image(label="Upload Image", type="numpy", height=400)
-                segment_button = gr.Button("🔍 Segment Objects", variant="primary", size="lg")
+                with gr.Row():
+                    segment_button = gr.Button("🔍 Segment Objects", variant="primary", size="lg")
+                    start_pipeline_button = gr.Button("🚀 Start Pipeline", variant="secondary", size="lg")
             
             with gr.Column(scale=1):
                 overlay_output = gr.Image(label="Detected Objects Overlay", height=400)
@@ -315,6 +508,23 @@ def create_ui():
             inputs=[],
             outputs=[comp['group'] for comp in object_components] + 
                     [comp['masked_img'] for comp in object_components]
+        )
+        
+        # Start Pipeline button: segment → generate images → 3D for all
+        pipeline_outputs = (
+            [status_segment, overlay_output, shareable_url, objects_container]
+            + [comp['group'] for comp in object_components]
+            + [comp['masked_img'] for comp in object_components]
+            + [status_generate]
+            + [comp['generated_img'] for comp in object_components]
+            + [comp['obj_status'] for comp in object_components]
+            + [comp['model_3d'] for comp in object_components]
+            + [comp['viewer_col'] for comp in object_components]
+        )
+        start_pipeline_button.click(
+            fn=run_full_pipeline,
+            inputs=[image_input],
+            outputs=pipeline_outputs
         )
         
         # Generate button - properly chain the updates
